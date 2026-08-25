@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Altamar I">
+<link rel="apple-touch-icon" href="https://script.google.com/macros/s/AKfycbx9MdUQwMAvfMu6RHy4ykYsNU3Uel10MxYhxKQ7qn159ReBcT_ZY4twLLdesxt3TZM/exec?appicon=1">
+<link rel="icon" type="image/png" href="https://script.google.com/macros/s/AKfycbx9MdUQwMAvfMu6RHy4ykYsNU3Uel10MxYhxKQ7qn159ReBcT_ZY4twLLdesxt3TZM/exec?appicon=1">
 <title>Altamar 1 — Portal de Propietarios</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,8 +25,13 @@
      antes de empezar a cargar el logo y la imagen de portada — eso es lo
      que antes causaba el retraso visible en la primera pantalla. -->
 <script>
-window.__CONTENIDO_INICIAL__ = <?!= (typeof contenidoInicialJson !== 'undefined') ? contenidoInicialJson : 'null' ?>;
-window.__ACTIVIDAD_INICIAL__ = <?!= (typeof actividadInicialJson !== 'undefined') ? actividadInicialJson : 'null' ?>;
+// En la versión Apps Script (SSR) estas dos variables venían precargadas
+// desde el servidor para que el logo/portada aparecieran sin esperar una
+// llamada adicional. En hosting estático (GitHub Pages) no hay SSR posible,
+// así que quedan en null y cargarContenidoPublico()/cargarActividadPublica_()
+// las piden por fetch() apenas carga la página (ver más abajo en este archivo).
+window.__CONTENIDO_INICIAL__ = null;
+window.__ACTIVIDAD_INICIAL__ = null;
 </script>
 <style>
 /* ============================================================
@@ -1105,10 +1112,7 @@ input,select,textarea,button{max-width:100%}
 <header class="hero hero-full" id="heroFull" aria-label="Bienvenida — Altamar I">
   <div class="hero-full-media">
     <div class="ph" id="heroImgWrap">
-      <?!= (typeof heroImgSrcInicial !== 'undefined' && heroImgSrcInicial)
-        ? '<img data-ssr="1" src="' + heroImgSrcInicial + '" alt="Altamar I" fetchpriority="high" decoding="async" style="width:100%;height:100%;object-fit:cover;object-position:center" onerror="this.onerror=null;this.remove();mostrarHeroRespaldo_();cargarImagenHero_(window.__CONTENIDO_INICIAL__ &amp;&amp; window.__CONTENIDO_INICIAL__.heroImagenUrl)">'
-        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 18l4-8 4 5 3-6 7 9H3z"/><circle cx="17" cy="6" r="2"/></svg><span class="ph-label">Imagen — Villas Altamar I</span><span class="ph-size">Sugerido 2400×1500px</span>'
-      ?>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M3 18l4-8 4 5 3-6 7 9H3z"/><circle cx="17" cy="6" r="2"/></svg><span class="ph-label">Imagen — Villas Altamar I</span><span class="ph-size">Sugerido 2400×1500px</span>
     </div>
   </div>
   <div class="hero-full-veil-top" aria-hidden="true"></div>
@@ -1441,35 +1445,47 @@ if (/iphone|ipad|ipod/i.test(navigator.userAgent) && !esPwaInstalada_()) {
 }
 
 /* ============================================================
-   API WRAPPER — google.script.run
+   API WRAPPER — fetch() al Web App de Apps Script
+   (antes: google.script.run, que solo funciona si el HTML se sirve
+   desde el propio Apps Script. Ahora el frontend puede vivir en
+   GitHub Pages o cualquier hosting estático; toda llamada al
+   servidor va por HTTP a APPS_SCRIPT_URL — ver doPost() en Code.gs)
    ============================================================ */
+// EDITA ESTA LÍNEA si vuelves a crear una implementación nueva en Apps
+// Script (cada implementación nueva genera una URL /exec distinta).
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx9MdUQwMAvfMu6RHy4ykYsNU3Uel10MxYhxKQ7qn159ReBcT_ZY4twLLdesxt3TZM/exec';
+
 function api(fnName, ...args){
   return apiCall_(fnName, args, true);
 }
 
 function apiCall_(fnName, args, permitirReintento){
-  return new Promise((resolve, reject) => {
-    if (typeof google === 'undefined' || !google.script || !google.script.run){
-      reject(new Error('Este portal solo funciona desplegado como Google Apps Script Web App.'));
-      return;
-    }
-    google.script.run
-      .withSuccessHandler(res => {
-        // Muy rara vez el servidor puede devolver una respuesta vacía por una
-        // demora pasajera (por ejemplo, justo después de iniciar sesión).
-        // En vez de asumir que la sesión venció y cerrarla de golpe,
-        // reintentamos una vez antes de darlo por error real.
-        if ((res === null || res === undefined) && permitirReintento){
-          apiCall_(fnName, args, false).then(resolve).catch(reject);
-        } else if (res === null || res === undefined){
-          reject(new Error('RESPUESTA_VACIA'));
-        } else {
-          resolve(res);
+  return fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    // Content-Type: text/plain (no application/json) a propósito: evita que
+    // el navegador dispare una petición OPTIONS de preflight CORS, que Apps
+    // Script no sabe responder. El body sigue siendo JSON de todas formas —
+    // doPost() en Code.gs lo parsea igual.
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ fn: fnName, args: args })
+  })
+    .then(r => r.json())
+    .then(res => {
+      // Muy rara vez el servidor puede devolver una respuesta vacía por una
+      // demora pasajera (por ejemplo, justo después de iniciar sesión).
+      // En vez de asumir que la sesión venció y cerrarla de golpe,
+      // reintentamos una vez antes de darlo por error real.
+      if (res && res.ok){
+        if ((res.data === null || res.data === undefined) && permitirReintento){
+          return apiCall_(fnName, args, false);
         }
-      })
-      .withFailureHandler(err => reject(new Error(err && err.message ? err.message : String(err))))
-      [fnName](...args);
-  });
+        if (res.data === null || res.data === undefined){
+          throw new Error('RESPUESTA_VACIA');
+        }
+        return res.data;
+      }
+      throw new Error((res && res.error) ? res.error : 'Error desconocido del servidor');
+    });
 }
 
 function toast(msg, isErr){
@@ -1877,7 +1893,7 @@ function resolverCandidatosImagen_(url, anchoCdn){
   // Prioridad 3: nuestro propio endpoint — bytes originales garantizados,
   // pero el más lento (pasa por una ejecución de Apps Script). Solo se usa
   // si los dos anteriores fallan.
-  const propia = location.href.split('?')[0] + '?img=' + id;
+  const propia = APPS_SCRIPT_URL + '?img=' + id;
   return [...new Set([rapidaGoogleusercontent, rapidaDriveUc, propia, url])];
 }
 
@@ -1955,26 +1971,21 @@ function cargarImagenHero_(urlGuardada){
 }
 
 function cargarContenidoPublico(){
-  // Si el servidor ya incrustó el contenido del sitio en el HTML (ver
-  // window.__CONTENIDO_INICIAL__ en el <head>), se usa de inmediato — así
-  // el logo y la portada empiezan a aplicarse sin esperar una llamada
-  // adicional a google.script.run, que antes era la causa principal de
-  // que las imágenes tardaran en aparecer al abrir el sitio.
+  // Si el servidor ya incrustó el contenido del sitio en el HTML, se usa de
+  // inmediato (SSR — ver notas de la versión Apps Script). En la versión
+  // estática (GitHub Pages) esto siempre es null, así que se pide por
+  // fetch() de una vez — ya no depende de estar corriendo dentro de Apps
+  // Script.
   if (window.__CONTENIDO_INICIAL__){
     aplicarContenidoSitio(window.__CONTENIDO_INICIAL__);
     return;
   }
-  if (typeof google === 'undefined' || !google.script || !google.script.run){
-    mostrarLogosConfiguracion_();
-    return;
-  }
-  google.script.run
-    .withSuccessHandler(aplicarContenidoSitio)
-    .withFailureHandler(() => {
+  api('contenidoSitioPublico')
+    .then(aplicarContenidoSitio)
+    .catch(() => {
       // Si falla la lectura, mostramos el logo predeterminado.
       mostrarLogosConfiguracion_();
-    })
-    .contenidoSitioPublico();
+    });
 }
 
 /* ============================================================
@@ -1992,14 +2003,12 @@ function aplicarActividadPublica_(a){
 }
 function cargarActividadPublica_(){
   // Igual que con el contenido del sitio: si el servidor ya incrustó un
-  // valor inicial (ver window.__ACTIVIDAD_INICIAL__ en el <head>), se
-  // muestra de inmediato sin esperar una llamada adicional.
+  // valor inicial (SSR, versión Apps Script), se muestra de inmediato.
+  // En GitHub Pages esto es null y se pide por fetch() directamente.
   if (window.__ACTIVIDAD_INICIAL__) aplicarActividadPublica_(window.__ACTIVIDAD_INICIAL__);
-  if (typeof google === 'undefined' || !google.script || !google.script.run) return;
-  google.script.run
-    .withSuccessHandler(aplicarActividadPublica_)
-    .withFailureHandler(() => { /* si falla, se conserva el último valor mostrado */ })
-    .estadisticasActividadPublica();
+  api('estadisticasActividadPublica')
+    .then(aplicarActividadPublica_)
+    .catch(() => { /* si falla, se conserva el último valor mostrado */ });
 }
 // El conteo se refresca solo mientras la pestaña está visible, para que la
 // cifra de "conectados ahora" no se quede desactualizada en una visita
@@ -2109,7 +2118,7 @@ function aplicarContenidoSitio(c){
     setTexto_('actUnidades', c.heroStat1Num);
     if (c.heroImagenUrl){
       // Si el servidor ya incrustó la imagen de portada en el HTML inicial
-      // (ver <?!= heroImgSrcInicial ?> más arriba) y ya cargó bien, no hace
+      // (ver la carga inicial más arriba) y ya cargó bien, no hace
       // falta volver a pedirla desde JS — eso evitaría un parpadeo o una
       // descarga duplicada. Solo se usa el cargador robusto si esa imagen
       // inicial no está, todavía no terminó de cargar, o falló.
